@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Walk Tracker</title>
+    <style>
+        body { font-family: -apple-system, system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: white; }
+        .card { background: #1e293b; padding: 2rem; border-radius: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); text-align: center; width: 85%; max-width: 400px; border: 1px solid #334155; }
+        
+        .label-group { margin-bottom: 20px; }
+        .small-label { font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+        
+        /* Total Distance (The new sum variable) */
+        #total-dist-label { font-size: 34px; font-weight: 800; color: #38bdf8; display: block; }
+        
+        /* Current Displacement */
+        #current-dist-label { font-size: 24px; font-weight: 600; color: #94a3b8; }
+        
+        /* Speed from Accelerometer */
+        #speed-label { font-size: 1.5rem; color: #fbbf24; margin-top: 10px; font-family: monospace; }
+
+        .controls { display: grid; gap: 10px; margin-top: 20px; }
+        button { padding: 15px; border: none; border-radius: 12px; font-size: 1rem; font-weight: bold; color: white; cursor: pointer; }
+        .start { background: #22c55e; }
+        .stop { background: #ef4444; }
+        .reset { background: #64748b; }
+        
+        /* Toast Notification Styling */
+        #toast { visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center; border-radius: 8px; padding: 16px; position: fixed; z-index: 1; bottom: 30px; font-size: 17px; border: 1px solid #38bdf8; }
+        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 4.5s; }
+        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+        @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div class="label-group">
+        <div class="small-label">Total Path Traveled</div>
+        <div id="total-dist-label">0.00 m</div>
+    </div>
+
+    <div class="label-group">
+        <div class="small-label">Direct Distance from Start</div>
+        <div id="current-dist-label">0.0 m</div>
+    </div>
+
+    <div class="label-group" style="border-top: 1px solid #334155; padding-top: 15px;">
+        <div class="small-label">Live Speed (Accel)</div>
+        <div id="speed-label">0.00 m/s</div>
+    </div>
+
+    <div class="controls">
+        <button id="startBtn" class="start">Start Session</button>
+        <button id="stopBtn" class="stop" disabled>Stop</button>
+        <button id="resetBtn" class="reset">Reset Everything</button>
+    </div>
+</div>
+
+<div id="toast">🏆 1km Milestones Reached!</div>
+
+<script>
+    let watchId = null;
+    let startCoords = null;
+    let lastCoords = null;
+    let totalDistance = 0;
+    let kmAchieved = 0;
+
+    const totalLabel = document.getElementById('total-dist-label');
+    const currentLabel = document.getElementById('current-dist-label');
+    const speedLabel = document.getElementById('speed-label');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; 
+        const p1 = lat1 * Math.PI/180;
+        const p2 = lat2 * Math.PI/180;
+        const dp = (lat2-lat1) * Math.PI/180;
+        const dl = (lon2-lon1) * Math.PI/180;
+        const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    // 1. GPS TRACKING LOGIC
+    startBtn.addEventListener('click', () => {
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        
+        // Request Accelerometer permission for iOS
+        if (typeof DeviceMotionEvent.requestPermission === 'function') {
+            DeviceMotionEvent.requestPermission();
+        }
+
+        watchId = navigator.geolocation.watchPosition((pos) => {
+            const { latitude, longitude, speed } = pos.coords;
+
+            if (!startCoords) {
+                startCoords = { latitude, longitude };
+                lastCoords = { latitude, longitude };
+                return;
+            }
+
+            // Calculate "Direct" distance from start
+            const fromStart = calculateDistance(startCoords.latitude, startCoords.longitude, latitude, longitude);
+            currentLabel.innerText = `${fromStart.toFixed(1)} m`;
+
+            // Calculate "Segment" distance for Total Path
+            const segment = calculateDistance(lastCoords.latitude, lastCoords.longitude, latitude, longitude);
+            
+            // Only add if movement is > 1 meter (filters GPS "jitter")
+            if (segment > 1) {
+                totalDistance += segment;
+                lastCoords = { latitude, longitude };
+                totalLabel.innerText = `${totalDistance.toFixed(2)} m`;
+            }
+
+            // Check for 1km Goal
+            if (Math.floor(totalDistance / 1000) > kmAchieved) {
+                kmAchieved++;
+                showToast(`You've moved ${kmAchieved} km!`);
+                if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+            }
+
+        }, null, { enableHighAccuracy: true });
+
+        // 2. ACCELEROMETER LOGIC (m/s)
+        window.addEventListener('devicemotion', (event) => {
+            const acc = event.acceleration;
+            if (acc) {
+                // Calculate magnitude of acceleration vector
+                const speedEstimate = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+                if (speedEstimate > 0.1) {
+                    speedLabel.innerText = `${speedEstimate.toFixed(2)} m/s`;
+                }
+            }
+        });
+    });
+
+    function showToast(msg) {
+        const x = document.getElementById("toast");
+        x.innerText = msg;
+        x.className = "show";
+        setTimeout(() => { x.className = x.className.replace("show", ""); }, 5000);
+    }
+
+    function stopTracking() {
+        if (watchId) navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+    }
+
+    document.getElementById('stopBtn').addEventListener('click', stopTracking);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        stopTracking();
+        startCoords = null;
+        lastCoords = null;
+        totalDistance = 0;
+        kmAchieved = 0;
+        totalLabel.innerText = "0.00 m";
+        currentLabel.innerText = "0.0 m";
+        speedLabel.innerText = "0.00 m/s";
+    });
+</script>
+</body>
+</html>
