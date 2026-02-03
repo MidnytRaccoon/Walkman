@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Walk Tracker</title>
+    <style>
+        body { font-family: -apple-system, system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f0f2f5; }
+        .card { background: white; padding: 2rem; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); text-align: center; width: 85%; }
+        #dynamic-label { font-size: 34px; font-weight: 800; color: #1a73e8; margin: 20px 0; }
+        .status { font-size: 0.8rem; color: #888; margin-bottom: 5px; }
+        .controls { display: flex; flex-direction: column; gap: 10px; }
+        button { padding: 15px; border: none; border-radius: 12px; font-size: 1rem; font-weight: bold; color: white; }
+        .start { background: #34a853; }
+        .stop { background: #ea4335; }
+        .reset { background: #70757a; }
+        button:disabled { background: #ccc; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <div id="status" class="status">HTTPS Required for GPS</div>
+    <div id="timestamp" class="status">Waiting...</div>
+    
+    <div id="dynamic-label">0.0 m</div>
+
+    <div class="controls">
+        <button id="startBtn" class="start">Start Tracking</button>
+        <button id="stopBtn" class="stop" disabled>Stop</button>
+        <button id="resetBtn" class="reset">Reset Everything</button>
+    </div>
+</div>
+
+<script>
+    let watchId = null;
+    let startCoords = null;
+
+    const label = document.getElementById('dynamic-label');
+    const status = document.getElementById('status');
+    const timeLabel = document.getElementById('timestamp');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; 
+        const p1 = lat1 * Math.PI/180;
+        const p2 = lat2 * Math.PI/180;
+        const dp = (lat2-lat1) * Math.PI/180;
+        const dl = (lon2-lon1) * Math.PI/180;
+        const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    startBtn.addEventListener('click', () => {
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        status.innerText = "Requesting GPS...";
+
+        watchId = navigator.geolocation.watchPosition((pos) => {
+            const { latitude, longitude, accuracy } = pos.coords;
+            
+            // Show accuracy to help debugging (low numbers are better)
+            status.innerText = `Accuracy: ±${Math.round(accuracy)}m`;
+            timeLabel.innerText = "Last sync: " + new Date().toLocaleTimeString();
+
+            if (!startCoords) {
+                startCoords = { latitude, longitude };
+            }
+
+            const d = calculateDistance(startCoords.latitude, startCoords.longitude, latitude, longitude);
+            label.innerText = `${d.toFixed(1)} m`;
+
+        }, (err) => {
+            status.innerText = "Error: " + err.message;
+        }, {
+            enableHighAccuracy: true, 
+            maximumAge: 0,
+            timeout: 10000
+        });
+    });
+
+    function stopTracking() {
+        if (watchId) navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        status.innerText = "Tracking Stopped";
+    }
+
+    document.getElementById('stopBtn').addEventListener('click', stopTracking);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        stopTracking();
+        startCoords = null;
+        label.innerText = "0.0 m";
+        timeLabel.innerText = "Waiting...";
+    });
+</script>
+</body>
+</html>
